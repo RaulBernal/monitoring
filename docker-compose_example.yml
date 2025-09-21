@@ -1,0 +1,144 @@
+services:
+  prometheus:
+    container_name: prometheus
+    image: bitnami/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/opt/bitnami/prometheus/data'
+      - '--storage.tsdb.retention.time=21d'
+      # Habilitar si queremos recibir directamente en Prometheus métricas/trazas de OpenTelemetry
+      # - '--web.enable-otlp-receiver'
+      # - '--distributor.otel-keep-identifying-resource-attributes=true'
+      # - '--distributor.otel-promote-resource-attributes=service.instance.id,service.name,service.namespace,service.version,cloud.availability_zone,cloud.region,container.name,deployment.environment,deployment.environment.name,k8s.cluster.name,k8s.container.name,k8s.cronjob.name,k8s.daemonset.name,k8s.deployment.name,k8s.job.name,k8s.namespace.name,k8s.pod.name,k8s.replicaset.name,k8s.statefulset.name'
+
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'  # Limit the container to use up to 2.0 CPUs
+          memory: 6.5G
+        reservations:
+          cpus: '1.25'  # Reserve 1.25 CPUs for the container
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./custom/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./custom/prometheus/hosts:/etc/hosts
+      - prometheus-data:/opt/bitnami/prometheus/data
+#      - ./custom/prometheus/nginx-selfsigned.key:/etc/prometheus/nginx-selfsigned.key
+#      - ./custom/prometheus/nginx-selfsigned.crt:/etc/prometheus/nginx-selfsigned.crt
+    networks:
+      - monitoring-network
+
+  prometheus-api:
+    container_name: prometheus-api
+    image: bitnami/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/opt/bitnami/prometheus/data'
+      - '--storage.tsdb.retention.time=21d'
+      # Habilitar si queremos recibir directamente en Prometheus métricas/trazas de OpenTelemetry
+      # - '--web.enable-otlp-receiver'
+      # - '--distributor.otel-keep-identifying-resource-attributes=true'
+      # - '--distributor.otel-promote-resource-attributes=service.instance.id,service.name,service.namespace,service.version,cloud.availability_zone,cloud.region,container.name,deployment.environment,deployment.environment.name,k8s.cluster.name,k8s.container.name,k8s.cronjob.name,k8s.daemonset.name,k8s.deployment.name,k8s.job.name,k8s.namespace.name,k8s.pod.name,k8s.replicaset.name,k8s.statefulset.name'
+
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'  # Limit the container to use up to 2.0 CPUs
+          memory: 15.5G
+        reservations:
+          cpus: '1.25'  # Reserve 1.25 CPUs for the container
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./custom/prometheus/prometheus-api.yml:/etc/prometheus/prometheus.yml
+      - ./custom/prometheus/hosts:/etc/hosts
+      - prometheus-api-data:/opt/bitnami/prometheus/data
+#      - ./custom/prometheus/nginx-selfsigned.key:/etc/prometheus/nginx-selfsigned.key
+#      - ./custom/prometheus/nginx-selfsigned.crt:/etc/prometheus/nginx-selfsigned.crt
+    networks:
+      - monitoring-network
+
+  otel-collector:
+    depends_on:
+    - tempo
+    - prometheus
+    container_name: otel-collector
+    image: otel/opentelemetry-collector:latest
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes:
+      - ./custom/otel-collector/config.yml:/etc/otelcol/config.yml
+    ports:
+      - "4318:4318" # Otel HTTP (para métricas y trazas)
+    networks:
+      - monitoring-network
+
+  tempo:
+    container_name: tempo
+    image: grafana/tempo:latest
+    environment:
+      - GOGC=50
+    command: ["-config.file=/etc/tempo.yml"]
+    volumes:
+      - ./custom/tempo/tempo.yml:/etc/tempo.yml
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"  # Tempo HTTP API (para Grafana)
+    networks:
+      - monitoring-network
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+    restart: unless-stopped
+
+  redis:
+    container_name: tempo-redis
+    image: redis:7-alpine
+    command: >
+      redis-server --maxmemory 4gb
+                   --maxmemory-policy allkeys-lru
+                   --save "" --appendonly no
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana
+    environment:
+      - GF_INSTALL_PLUGINS=marcusolsson-json-datasource
+      - GF_LIVE_ENABLED=false
+    networks:
+      - monitoring-network
+    volumes:
+      - ./custom/grafana/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
+      - ./custom/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./custom/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml
+      - ./custom/grafana/grafana.ini:/etc/grafana/grafana.ini
+      - ./custom/grafana/markers/:/usr/share/grafana/public/img/icons/marker/
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3100:3100"
+
+networks:
+  monitoring-network:
+    driver: bridge
+
+volumes:
+  prometheus-api-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  tempo-data:
+    driver: local
+  redis-data:
+    driver: local
